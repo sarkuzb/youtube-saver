@@ -1,9 +1,12 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { downloaderAPI } from "../../services/api";
 import { formatDuration, formatViewCount } from "../../utils/validation";
 import styles from "./downloader.module.css";
 import { Download } from "lucide-react";
 import { motion } from "framer-motion";
+
+// YouTube Data API Key
+const YOUTUBE_API_KEY = "AIzaSyBrLPGeq4hixwIB6aSm7nSJtQzWnGT9BZ0";
 
 const preferredResolutions = [
   "144p",
@@ -19,6 +22,37 @@ const preferredResolutions = [
 const DownloadOptions = ({ videoInfo, videoUrl }) => {
   const [selectedFormat, setSelectedFormat] = useState(null);
   const [activeTab, setActiveTab] = useState("video");
+  const [likeCount, setLikeCount] = useState(null);
+
+  // Extract video ID from YouTube URL
+  const extractVideoId = (url) => {
+    const regex = /(?:v=|\/)([0-9A-Za-z_-]{11})(?:[?&]|$)/;
+    const match = url.match(regex);
+    return match ? match[1] : null;
+  };
+
+  // Fetch likes from YouTube Data API
+  useEffect(() => {
+    const videoId = extractVideoId(videoUrl);
+    if (!videoId) return;
+
+    const fetchLikes = async () => {
+      try {
+        const response = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${YOUTUBE_API_KEY}`
+        );
+        const data = await response.json();
+        const stats = data?.items?.[0]?.statistics;
+        if (stats?.likeCount) {
+          setLikeCount(stats.likeCount);
+        }
+      } catch (error) {
+        console.error("Failed to fetch like count:", error);
+      }
+    };
+
+    fetchLikes();
+  }, [videoUrl]);
 
   const handleDownload = () => {
     if (!selectedFormat) return;
@@ -40,7 +74,6 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
     document.body.removeChild(link);
   };
 
-  // ✅ Filter and merge formats intelligently
   const mergedVideoFormats = useMemo(() => {
     const videoOnly = videoInfo.formats.video.filter(
       (f) => f.type === "video-only"
@@ -53,7 +86,6 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
     const bestAudio = audioOnly[0];
     const merged = [];
 
-    // Add filtered progressive formats
     progressive.forEach((f) => {
       if (preferredResolutions.includes(f.quality)) {
         merged.push({
@@ -65,7 +97,6 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
       }
     });
 
-    // Add filtered merged formats (video-only + best audio)
     if (bestAudio) {
       videoOnly.forEach((f) => {
         if (preferredResolutions.includes(f.quality)) {
@@ -79,7 +110,6 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
       });
     }
 
-    // Sort by resolution height
     merged.sort((a, b) => {
       const aIdx = preferredResolutions.indexOf(a.quality);
       const bIdx = preferredResolutions.indexOf(b.quality);
@@ -125,8 +155,10 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
             <span>
               Views: {formatViewCount(videoInfo.videoDetails.viewCount)}
             </span>
-            <span>Likes: {formatViewCount(videoInfo.videoDetails.likes)}</span>
-
+            <span>
+              Likes:{" "}
+              {likeCount !== null ? formatViewCount(likeCount) : "Loading..."}
+            </span>
             <span>Upload Date: {formattedDate}</span>
           </div>
         </div>
