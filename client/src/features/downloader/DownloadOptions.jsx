@@ -6,7 +6,7 @@ import { Download } from "lucide-react";
 import { motion } from "framer-motion";
 
 // YouTube Data API Key
-const YOUTUBE_API_KEY = "AIzaSyBrLPGeq4hixwIB6aSm7nSJtQzWnGT9BZ0";
+const YOUTUBE_API_KEY = "AIzaSyA_HgifGGFu8-tpZhyk6YJMOL3yotm5MFA";
 
 const preferredResolutions = [
   "144p",
