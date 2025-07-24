@@ -58,7 +58,7 @@ youtube-downloader/
 │   ├── node_modules/
 │   ├── .env
 │   ├── .gitignore
-│   ├── sapp.js                 # Could be `app.js` (typo?)
+│   ├── app.js                 
 │   ├── server.js               # Main entry point
 │   ├── package-lock.json
 │   ├── package.json
