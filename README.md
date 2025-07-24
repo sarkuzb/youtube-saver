@@ -131,10 +131,3 @@ npm run dev
 * FFmpeg is required for merging formats like `137+140` (video-only + audio).
 
 ---
-
-### 📃 License
-
-MIT License © [Your Name](https://github.com/your-username)
-
----
-
