@@ -63,7 +63,7 @@ cd youtube-downloader
 ```bash
 cd backend
 npm install
-node index.js
+node server.js
 ```
 
 > ✨ Make sure to update the `YTDLP_PATH` and `FFMPEG_PATH` in `services/YouTubeService.js` to match your local file paths.
