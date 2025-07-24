@@ -2,7 +2,7 @@
 
 ## 📽️ YouTube Video Downloader
 
-A full-stack web application to download YouTube videos or audio in various formats and resolutions using `yt-dlp`, `Node.js`, and `React`.
+A full-stack web application to download YouTube videos or audio in various formats and resolutions using `yt-dlp`, `Node.js` and `React`.
 Built with a clean UI, intelligent format filtering, and supports progressive and merged downloads.
 
 ---
@@ -22,21 +22,48 @@ Built with a clean UI, intelligent format filtering, and supports progressive an
 
 ```
 youtube-downloader/
-│
-├── backend/                 # Express server
-│   ├── controllers/         # Route controllers
-│   ├── services/            # YouTubeService logic (yt-dlp, ffmpeg)
-│   ├── routes/              # API endpoints
-│   └── index.js             # Entry point for Express app
-│
-├── frontend/                # React client
-│   ├── components/          # UI components
-│   ├── pages/               # Page-level components
-│   ├── services/            # API functions
-│   └── App.jsx              # Root component
-│
-├── README.md
-└── package.json
+├── client/
+│   ├── node_modules/
+│   ├── public/
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── features/
+│   │   │   └── downloader/
+│   │   │       ├── downloader.module.css
+│   │   │       ├── DownloaderForm.jsx
+│   │   │       ├── DownloadOptions.jsx
+│   │   │       └── DownloaderPage.jsx
+│   │   ├── services/
+│   │   │   └── api.js
+│   │   ├── utils/
+│   │   ├── App.css
+│   │   ├── App.jsx
+│   │   ├── index.css
+│   │   ├── main.jsx
+│   │   └── reportWebVitals.js
+│   ├── .env
+│   ├── .gitignore
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   └── README.md
+├── server/
+│   ├── controllers/
+│   │   └── downloaderController.js
+│   ├── routes/
+│   │   └── downloader.js
+│   ├── services/
+│   │   └── youtubeService.js
+│   ├── node_modules/
+│   ├── .env
+│   ├── .gitignore
+│   ├── sapp.js                 # Could be `app.js` (typo?)
+│   ├── server.js               # Main entry point
+│   ├── package-lock.json
+│   ├── package.json
+│   └── README.md
+
 ```
 
 ---
