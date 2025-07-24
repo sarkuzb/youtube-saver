@@ -82,7 +82,10 @@ npm run dev
 
 ### 📸 Screenshot
 
-![App Preview](preview.png) <!-- Add a screenshot image in the root directory -->
+<img width="616" height="486" alt="{C9DFD007-AD4E-49F6-87F5-06396539234F}" src="https://github.com/user-attachments/assets/071d7145-10fc-43f7-ad9d-fd0a448ed585" />\
+<img width="683" height="772" alt="{1627225C-801C-4207-8D25-D4351F1E3EF9}" src="https://github.com/user-attachments/assets/67c21cce-f54b-4ced-9365-7bfa6217b659" />
+
+
 
 ---
 
