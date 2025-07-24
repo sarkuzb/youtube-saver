@@ -8,6 +8,7 @@ import {
   Loader,
   PlayCircle,
   AlertCircle,
+  X,
 } from "lucide-react";
 
 const DownloaderForm = ({ onSubmit, isLoading }) => {
@@ -64,6 +65,18 @@ const DownloaderForm = ({ onSubmit, isLoading }) => {
             className="flex-1 bg-transparent outline-none text-sm text-gray-800 placeholder-gray-400"
             disabled={isLoading}
           />
+          {url && !isLoading && (
+            <button
+              type="button"
+              onClick={() => {
+                setUrl("");
+                setError("");
+              }}
+              className="text-gray-400 hover:text-gray-700 transition cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Paste Button */}
@@ -97,7 +110,9 @@ const DownloaderForm = ({ onSubmit, isLoading }) => {
       <button
         type="submit"
         disabled={isLoading || !url.trim()}
-        className="w-full py-3 px-6 text-white font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 transition cursor-pointer"
+        className={`w-full py-3 px-6 text-white font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 transition ${
+          isLoading || !url.trim() ? "cursor-not-allowed" : "cursor-pointer"
+        }`}
       >
         {isLoading ? (
           <>

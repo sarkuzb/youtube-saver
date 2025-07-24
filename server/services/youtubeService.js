@@ -1,6 +1,9 @@
 const path = require("path");
 const sanitize = require("sanitize-filename");
 const { spawn } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const { v4: uuidv4 } = require("uuid");
 
 const YTDLP_PATH = path.resolve("C:/Users/Sarvar/Downloads/yt-dlp.exe");
 const FFMPEG_PATH = path.resolve(
@@ -17,13 +20,14 @@ class YouTubeService {
 
   static async getVideoInfo(url) {
     try {
-      console.log("✅ yt-dlp path:", YTDLP_PATH);
-
       const info = await youtubeDlExec(url, {
         dumpSingleJson: true,
         noCheckCertificates: true,
         noWarnings: true,
         preferFreeFormats: true,
+        addHeader: [
+          "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        ],
         referer: "https://www.youtube.com/",
       });
 
@@ -93,7 +97,7 @@ class YouTubeService {
             container: f.ext,
             size,
             type: "video+audio",
-            label: `${res} (Standard)`,
+            label: `${res} (MP4)`,
           };
         }
       }
@@ -106,18 +110,19 @@ class YouTubeService {
             container: f.ext,
             size,
             type: "video-only",
-            label: `${res} (Merged)`,
+            label: `${res} (Best Quality)`,
           };
         }
       }
 
-      if (!isVideo && isAudio) {
+      if (!isVideo && isAudio && f.abr) {
         audioFormats.push({
           itag: f.format_id,
-          quality: f.abr ? `${f.abr}kbps` : "Unknown",
+          quality: `${Math.round(f.abr)}kbps`,
           container: f.ext,
           size,
           type: "audio",
+          label: `Audio ${Math.round(f.abr)}kbps (${f.ext.toUpperCase()})`,
         });
       }
     });
@@ -129,9 +134,15 @@ class YouTubeService {
       return entries;
     });
 
+    audioFormats.sort((a, b) => {
+      const aBitrate = parseInt(a.quality) || 0;
+      const bBitrate = parseInt(b.quality) || 0;
+      return bBitrate - aBitrate;
+    });
+
     return {
       video: finalVideo,
-      audio: audioFormats.slice(0, 3),
+      audio: audioFormats.slice(0, 5),
     };
   }
 
@@ -157,38 +168,193 @@ class YouTubeService {
       .substring(0, 200);
   }
 
-  static downloadVideo(url, itag, res) {
+  // Direct streaming download with progress
+  static downloadVideoStream(url, itag, res, type = "video") {
+    // Handle format selection
+    let formatArgs = [];
+
+    if (type === "audio") {
+      formatArgs = [
+        "-f",
+        `${itag}/bestaudio[ext=m4a]/bestaudio`,
+        "-x",
+        "--audio-format",
+        "mp3",
+      ];
+    } else if (itag === "best" || itag.includes("best")) {
+      formatArgs = ["-f", "best[ext=mp4]/best"];
+    } else if (itag.includes("+")) {
+      formatArgs = ["-f", `${itag}/best[ext=mp4]/best`];
+    } else {
+      formatArgs = ["-f", `${itag}+bestaudio[ext=m4a]/best`];
+    }
+
     const args = [
       url,
-      "-f",
-      itag,
+      ...formatArgs,
       "--ffmpeg-location",
-      `"${FFMPEG_PATH}"`,
+      FFMPEG_PATH,
       "-o",
-      "-",
+      "-", // Output to stdout for direct streaming
+      // Headers
+      "--user-agent",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "--referer",
+      "https://www.youtube.com/",
+      "--add-header",
+      "Accept-Language:en-US,en;q=0.9",
+      // Options
+      "--no-check-certificate",
+      "--no-warnings",
+      "--no-playlist",
+      "--newline", // Progress on new lines
+      "--no-color",
     ];
 
-    console.log("▶️ Spawning yt-dlp:", `"${YTDLP_PATH}"`, args.join(" "));
+    console.log("▶️ Starting direct stream download");
+    const ytdlp = spawn(YTDLP_PATH, args);
 
-    const ytdlp = spawn(YTDLP_PATH, args, { shell: true });
+    let contentLength = 0;
+    let downloadedBytes = 0;
 
-    ytdlp.stdout.pipe(res);
+    // Handle stdout (actual video data)
+    ytdlp.stdout.on("data", (chunk) => {
+      downloadedBytes += chunk.length;
+      res.write(chunk);
+    });
 
+    // Handle stderr (progress and errors)
     ytdlp.stderr.on("data", (data) => {
-      console.error("yt-dlp stderr:", data.toString());
+      const output = data.toString();
+
+      // Parse progress information
+      const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+      if (progressMatch) {
+        const progress = parseFloat(progressMatch[1]);
+        console.log(`Download progress: ${progress}%`);
+      }
+
+      // Parse size information
+      const sizeMatch = output.match(
+        /\[download\]\s+Destination:.*?(\d+\.?\d*\w+)/
+      );
+      if (sizeMatch) {
+        console.log(`File size: ${sizeMatch[1]}`);
+      }
     });
 
     ytdlp.on("error", (err) => {
-      console.error("yt-dlp error:", err.message);
+      console.error("yt-dlp error:", err);
       if (!res.headersSent) {
-        res.status(500).send("Download failed: " + err.message);
+        res.status(500).json({ error: "Download failed: " + err.message });
       }
     });
 
     ytdlp.on("close", (code) => {
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
+      if (code === 0) {
+        console.log("✅ Download completed successfully");
+        res.end();
+      } else {
+        console.error("yt-dlp exited with code:", code);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Download failed with code: " + code });
+        }
       }
+    });
+
+    // Handle client disconnect
+    res.on("close", () => {
+      console.log("Client disconnected, killing yt-dlp process");
+      ytdlp.kill("SIGTERM");
+    });
+  }
+
+  // Progress tracking with SSE (Server-Sent Events)
+  static async downloadVideoWithProgress(url, itag, type = "video") {
+    return new Promise((resolve, reject) => {
+      const tempFile = path.join(
+        os.tmpdir(),
+        `${uuidv4()}.${type === "audio" ? "mp3" : "mp4"}`
+      );
+
+      let formatArgs = [];
+      if (type === "audio") {
+        formatArgs = [
+          "-f",
+          `${itag}/bestaudio[ext=m4a]/bestaudio`,
+          "-x",
+          "--audio-format",
+          "mp3",
+        ];
+      } else if (itag === "best") {
+        formatArgs = ["-f", "best[ext=mp4]/best"];
+      } else if (itag.includes("+")) {
+        formatArgs = ["-f", `${itag}/best[ext=mp4]/best`];
+      } else {
+        formatArgs = ["-f", `${itag}+bestaudio[ext=m4a]/best`];
+      }
+
+      const args = [
+        url,
+        ...formatArgs,
+        "--ffmpeg-location",
+        FFMPEG_PATH,
+        "-o",
+        tempFile,
+        "--user-agent",
+        "Mozilla/5.0",
+        "--referer",
+        "https://www.youtube.com/",
+        "--no-check-certificate",
+        "--no-warnings",
+        "--newline",
+        "--progress",
+      ];
+
+      const ytdlp = spawn(YTDLP_PATH, args);
+      const progressData = {
+        tempFile,
+        progress: 0,
+        speed: "",
+        eta: "",
+        size: "",
+      };
+
+      ytdlp.stderr.on("data", (data) => {
+        const output = data.toString();
+
+        // Parse different progress indicators
+        const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        const speedMatch = output.match(/at\s+(\d+\.?\d*\w+\/s)/);
+        const etaMatch = output.match(/ETA\s+(\d+:\d+)/);
+        const sizeMatch = output.match(/of\s+(\d+\.?\d*\w+)/);
+
+        if (progressMatch) progressData.progress = parseFloat(progressMatch[1]);
+        if (speedMatch) progressData.speed = speedMatch[1];
+        if (etaMatch) progressData.eta = etaMatch[1];
+        if (sizeMatch) progressData.size = sizeMatch[1];
+
+        // Emit progress update
+        if (progressMatch) {
+          resolve({
+            type: "progress",
+            data: progressData,
+          });
+        }
+      });
+
+      ytdlp.on("close", (code) => {
+        if (code === 0) {
+          resolve({
+            type: "complete",
+            data: { ...progressData, tempFile },
+          });
+        } else {
+          reject(new Error(`Download failed with code ${code}`));
+        }
+      });
+
+      ytdlp.on("error", reject);
     });
   }
 }
