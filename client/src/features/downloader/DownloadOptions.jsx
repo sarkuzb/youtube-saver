@@ -76,116 +76,14 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
   const handleDownload = () => {
     if (!selectedFormat) return;
 
-    setDownloading(true);
-    setDownloadProgress(0);
-    setDownloadError(null);
-    setDownloadSpeed("");
-    setDownloadETA("");
-    setDownloadSize("");
+    const downloadUrl = downloaderAPI.getDownloadURL(
+      videoUrl,
+      selectedFormat.itag,
+      selectedFormat.type
+    );
 
-    // Option 1: Direct download (simpler but no real progress from server)
-    const useDirectDownload = false; // Set to true to use simple download
-
-    if (useDirectDownload) {
-      // Simple download with simulated progress
-      const downloadUrl = downloaderAPI.getDownloadURL(
-        videoUrl,
-        selectedFormat.itag,
-        selectedFormat.type
-      );
-
-      // Simulate progress (since we can't get real progress from direct download)
-      const progressInterval = setInterval(() => {
-        setDownloadProgress((prev) => {
-          if (prev >= 95) {
-            clearInterval(progressInterval);
-            return 95;
-          }
-          return prev + Math.random() * 10;
-        });
-      }, 500);
-
-      // Create download link
-      fetch(downloadUrl)
-        .then((response) => response.blob())
-        .then((blob) => {
-          clearInterval(progressInterval);
-          setDownloadProgress(100);
-
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${videoInfo.videoDetails.title.replace(
-            /[^a-z0-9]/gi,
-            "_"
-          )}.${selectedFormat.type === "audio" ? "mp3" : "mp4"}`;
-          document.body.appendChild(a);
-          a.click();
-          window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
-
-          setTimeout(() => {
-            setDownloading(false);
-            setDownloadProgress(0);
-          }, 2000);
-        })
-        .catch((error) => {
-          clearInterval(progressInterval);
-          setDownloadError(error.message);
-          setDownloading(false);
-        });
-    } else {
-      // Option 2: Server-Sent Events for real progress
-      const es = downloaderAPI.createProgressEventSource(
-        videoUrl,
-        selectedFormat.itag,
-        selectedFormat.type,
-        {
-          onConnected: (data) => {
-            console.log("Connected to download progress stream");
-          },
-          onInfo: (data) => {
-            console.log("Video:", data.title);
-            if (data.duration) {
-              console.log("Duration:", data.duration);
-            }
-          },
-          onProgress: (data) => {
-            setDownloadProgress(data.progress || 0);
-            setDownloadSpeed(data.speed || "");
-            setDownloadETA(data.eta || "");
-            setDownloadSize(data.size || "");
-          },
-          onComplete: (data) => {
-            setDownloadProgress(100);
-
-            // Trigger actual file download
-            const downloadUrl = downloaderAPI.getDownloadURL(
-              videoUrl,
-              selectedFormat.itag,
-              selectedFormat.type
-            );
-
-            window.location.href = downloadUrl;
-
-            setTimeout(() => {
-              setDownloading(false);
-              setDownloadProgress(0);
-              setDownloadSpeed("");
-              setDownloadETA("");
-              setDownloadSize("");
-            }, 3000);
-          },
-          onError: (data) => {
-            console.error("Download error:", data.message);
-            setDownloadError(data.message);
-            setDownloading(false);
-          },
-        }
-      );
-
-      setEventSource(es);
-    }
+    // Simply redirect to download URL
+    window.location.href = downloadUrl;
   };
 
   const cancelDownload = () => {
