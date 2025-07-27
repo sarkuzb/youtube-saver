@@ -1,3 +1,4 @@
+// Fast direct download with simulated progress
 import React, { useState, useEffect, useMemo } from "react";
 import { downloaderAPI } from "../../services/api";
 import { formatDuration, formatViewCount } from "../../utils/validation";
@@ -82,8 +83,22 @@ const DownloadOptions = ({ videoInfo, videoUrl }) => {
       selectedFormat.type
     );
 
-    // Simply redirect to download URL
+    // Method 1: Direct navigation (most reliable)
     window.location.href = downloadUrl;
+
+    // Method 2: New tab (if above doesn't work)
+    // window.open(downloadUrl, '_blank');
+
+    // Method 3: Hidden form submission
+    /*
+    const form = document.createElement('form');
+    form.method = 'GET';
+    form.action = downloadUrl;
+    form.style.display = 'none';
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+    */
   };
 
   const cancelDownload = () => {

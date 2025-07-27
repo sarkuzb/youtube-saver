@@ -89,6 +89,7 @@ class YouTubeService {
         ? this.estimateSizeFromBitrate(f.tbr, duration)
         : "Unknown";
 
+      // Prefer progressive formats (pre-merged video+audio) for faster downloads
       if (isVideo && isAudio && res) {
         if (!progressiveMap[res] || f.ext === "mp4") {
           progressiveMap[res] = {
@@ -97,7 +98,8 @@ class YouTubeService {
             container: f.ext,
             size,
             type: "video+audio",
-            label: `${res} (MP4)`,
+            label: `${res} (Fast)`,
+            isProgressive: true,
           };
         }
       }
@@ -110,7 +112,8 @@ class YouTubeService {
             container: f.ext,
             size,
             type: "video-only",
-            label: `${res} (Best Quality)`,
+            label: `${res} (High Quality)`,
+            isProgressive: false,
           };
         }
       }
@@ -127,9 +130,12 @@ class YouTubeService {
       }
     });
 
+    // Prioritize progressive formats for faster downloads
     const finalVideo = resolutionOrder.flatMap((res) => {
       const entries = [];
+      // Add progressive formats first (faster)
       if (progressiveMap[res]) entries.push(progressiveMap[res]);
+      // Then add adaptive formats
       if (videoOnlyMap[res]) entries.push(videoOnlyMap[res]);
       return entries;
     });
@@ -168,25 +174,29 @@ class YouTubeService {
       .substring(0, 200);
   }
 
-  // Direct streaming download with progress
+  // OPTIMIZED: Direct streaming download (fastest method)
   static downloadVideoStream(url, itag, res, type = "video") {
-    // Handle format selection
+    console.log("⚡ Starting optimized streaming download");
+
+    // Optimize format selection for speed
     let formatArgs = [];
 
     if (type === "audio") {
-      formatArgs = [
-        "-f",
-        `${itag}/bestaudio[ext=m4a]/bestaudio`,
-        "-x",
-        "--audio-format",
-        "mp3",
-      ];
-    } else if (itag === "best" || itag.includes("best")) {
+      // For audio, use best available without conversion for speed
+      formatArgs = ["-f", `${itag}/bestaudio[ext=m4a]/bestaudio`];
+      if (itag !== "bestaudio") {
+        formatArgs.push("-x", "--audio-format", "mp3");
+      }
+    } else if (itag === "best") {
+      // Prefer pre-merged formats for speed
       formatArgs = ["-f", "best[ext=mp4]/best"];
     } else if (itag.includes("+")) {
-      formatArgs = ["-f", `${itag}/best[ext=mp4]/best`];
+      // For adaptive formats, optimize the merge
+      const [videoId, audioId] = itag.split("+");
+      formatArgs = ["-f", `${videoId}+${audioId}/best`];
     } else {
-      formatArgs = ["-f", `${itag}+bestaudio[ext=m4a]/best`];
+      // Single format ID - check if it needs audio
+      formatArgs = ["-f", `${itag}/best`];
     }
 
     const args = [
@@ -196,102 +206,362 @@ class YouTubeService {
       FFMPEG_PATH,
       "-o",
       "-", // Output to stdout for direct streaming
-      // Headers
+
+      // Speed optimizations
+      "--concurrent-fragments",
+      "8", // Download 8 fragments concurrently
+      "--buffer-size",
+      "32K", // Larger buffer for better performance
+      "--http-chunk-size",
+      "10485760", // 10MB chunks
+
+      // Network optimizations
+      "--socket-timeout",
+      "30",
+      "--retries",
+      "3",
+      "--no-part", // Don't use .part files
+
+      // Headers to avoid throttling
       "--user-agent",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "--referer",
       "https://www.youtube.com/",
-      "--add-header",
-      "Accept-Language:en-US,en;q=0.9",
-      // Options
+
+      // Reduce overhead
       "--no-check-certificate",
       "--no-warnings",
       "--no-playlist",
-      "--newline", // Progress on new lines
-      "--no-color",
+      "--quiet", // Minimal output for speed
+      "--no-progress", // Don't calculate progress for speed
+      "--no-call-home",
     ];
 
-    console.log("▶️ Starting direct stream download");
-    const ytdlp = spawn(YTDLP_PATH, args);
+    console.log("Format args:", formatArgs.join(" "));
 
-    let contentLength = 0;
-    let downloadedBytes = 0;
-
-    // Handle stdout (actual video data)
-    ytdlp.stdout.on("data", (chunk) => {
-      downloadedBytes += chunk.length;
-      res.write(chunk);
+    const ytdlp = spawn(YTDLP_PATH, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
 
-    // Handle stderr (progress and errors)
-    ytdlp.stderr.on("data", (data) => {
-      const output = data.toString();
+    // Optimize TCP settings
+    if (res.socket) {
+      res.socket.setNoDelay(true);
+      res.socket.setKeepAlive(true, 5000);
+    }
 
-      // Parse progress information
-      const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
-      if (progressMatch) {
-        const progress = parseFloat(progressMatch[1]);
-        console.log(`Download progress: ${progress}%`);
+    // Track download speed
+    const startTime = Date.now();
+    let bytesDownloaded = 0;
+    let lastLogTime = startTime;
+
+    ytdlp.stdout.on("data", (chunk) => {
+      bytesDownloaded += chunk.length;
+      res.write(chunk);
+
+      // Log speed every 5MB
+      if (bytesDownloaded % (5 * 1024 * 1024) < chunk.length) {
+        const now = Date.now();
+        const elapsedSeconds = (now - startTime) / 1000;
+        const speedMBps = (
+          bytesDownloaded /
+          elapsedSeconds /
+          1024 /
+          1024
+        ).toFixed(2);
+        console.log(
+          `📊 Downloaded: ${this.formatBytes(
+            bytesDownloaded
+          )} | Speed: ${speedMBps} MB/s`
+        );
+        lastLogTime = now;
       }
+    });
 
-      // Parse size information
-      const sizeMatch = output.match(
-        /\[download\]\s+Destination:.*?(\d+\.?\d*\w+)/
-      );
-      if (sizeMatch) {
-        console.log(`File size: ${sizeMatch[1]}`);
+    // Handle errors efficiently
+    let errorOutput = "";
+    ytdlp.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+      // Only log actual errors, not warnings
+      if (data.toString().includes("ERROR")) {
+        console.error("yt-dlp error:", data.toString());
       }
     });
 
     ytdlp.on("error", (err) => {
-      console.error("yt-dlp error:", err);
+      console.error("❌ yt-dlp spawn error:", err.message);
       if (!res.headersSent) {
         res.status(500).json({ error: "Download failed: " + err.message });
       }
     });
 
     ytdlp.on("close", (code) => {
+      const duration = (Date.now() - startTime) / 1000;
+      const avgSpeed = (bytesDownloaded / duration / 1024 / 1024).toFixed(2);
+
       if (code === 0) {
-        console.log("✅ Download completed successfully");
+        console.log(
+          `✅ Download completed: ${this.formatBytes(
+            bytesDownloaded
+          )} in ${duration.toFixed(1)}s (${avgSpeed} MB/s avg)`
+        );
         res.end();
       } else {
-        console.error("yt-dlp exited with code:", code);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "Download failed with code: " + code });
+        console.error(`❌ yt-dlp exited with code ${code}`);
+        if (errorOutput.includes("requested format not available")) {
+          console.log("Retrying with best available format...");
+          // Retry with best format
+          this.downloadVideoStream(url, "best", res, type);
+        } else if (!res.headersSent) {
+          res.status(500).json({
+            error: "Download failed",
+            code: code,
+            details: errorOutput.substring(0, 500),
+          });
         }
       }
     });
 
     // Handle client disconnect
     res.on("close", () => {
-      console.log("Client disconnected, killing yt-dlp process");
+      console.log("⚠️ Client disconnected, stopping download");
+      ytdlp.kill("SIGTERM");
+    });
+
+    res.on("error", (err) => {
+      console.error("Response error:", err);
       ytdlp.kill("SIGTERM");
     });
   }
 
-  // Progress tracking with SSE (Server-Sent Events)
-  static async downloadVideoWithProgress(url, itag, type = "video") {
-    return new Promise((resolve, reject) => {
-      const tempFile = path.join(
-        os.tmpdir(),
-        `${uuidv4()}.${type === "audio" ? "mp3" : "mp4"}`
+  // Add this method for reliable downloads
+  // Replace the downloadVideoStream method with this more reliable version:
+  static downloadVideoReliable(url, itag, res, type = "video") {
+    console.log("🎯 Starting reliable download method");
+
+    // For format 616+140-drc, simplify to avoid the -drc suffix
+    if (itag.includes("-drc")) {
+      itag = itag.replace("-drc", "");
+      console.log("📝 Cleaned format:", itag);
+    }
+
+    const tempFile = path.join(
+      os.tmpdir(),
+      `${uuidv4()}.${type === "audio" ? "mp3" : "mp4"}`
+    );
+    console.log("📁 Temp file:", tempFile);
+
+    let formatArgs = [];
+    if (type === "audio") {
+      formatArgs = ["-f", `${itag}/bestaudio[ext=m4a]/bestaudio`];
+    } else if (itag === "best") {
+      formatArgs = ["-f", "best[ext=mp4]/best"];
+    } else if (itag.includes("+")) {
+      // Handle merged formats properly
+      const [video, audio] = itag.split("+");
+      formatArgs = ["-f", `${video}+${audio}/best[ext=mp4]/best`];
+    } else {
+      formatArgs = ["-f", `${itag}/best`];
+    }
+
+    const args = [
+      url,
+      ...formatArgs,
+      "--ffmpeg-location",
+      FFMPEG_PATH,
+      "-o",
+      tempFile,
+
+      // Important: Add these to handle 403 errors
+      "--user-agent",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "--referer",
+      "https://www.youtube.com/",
+      "--add-header",
+      "Accept:*/*",
+      "--add-header",
+      "Accept-Language:en-US,en;q=0.9",
+      "--add-header",
+      "Sec-Fetch-Mode:navigate",
+
+      // Performance options
+      "--concurrent-fragments",
+      "4", // Reduce to avoid 403s
+      "--buffer-size",
+      "16K",
+      "--http-chunk-size",
+      "1048576", // 1MB chunks
+      "--retries",
+      "10",
+      "--fragment-retries",
+      "10",
+      "--retry-sleep",
+      "3",
+
+      // Other options
+      "--no-check-certificate",
+      "--no-warnings",
+      "--no-part",
+      "--progress",
+      "--newline",
+    ];
+
+    console.log("🚀 Starting yt-dlp with args:", formatArgs.join(" "));
+
+    const ytdlp = spawn(YTDLP_PATH, args);
+
+    let downloadError = false;
+    let progressData = { percent: 0, downloaded: 0, total: 0 };
+
+    ytdlp.stdout.on("data", (data) => {
+      const output = data.toString();
+      console.log("stdout:", output);
+    });
+
+    ytdlp.stderr.on("data", (data) => {
+      const output = data.toString();
+
+      // Check for actual errors (not just warnings)
+      if (output.includes("ERROR:") && !output.includes("fragment")) {
+        console.error("❌ yt-dlp error:", output);
+        downloadError = true;
+      }
+
+      // Parse progress
+      const progressMatch = output.match(
+        /\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*(\d+\.?\d*\w+)/
       );
+      if (progressMatch) {
+        progressData.percent = parseFloat(progressMatch[1]);
+        progressData.totalSize = progressMatch[2];
+        console.log(
+          `📊 Progress: ${progressData.percent}% of ${progressData.totalSize}`
+        );
+      }
+    });
+
+    ytdlp.on("close", (code) => {
+      console.log(`🏁 yt-dlp process ended with code: ${code}`);
+
+      // Check if download was successful
+      if (!fs.existsSync(tempFile)) {
+        console.error("❌ Download failed - file not created");
+        if (!res.headersSent) {
+          res.status(500).json({
+            error: "Download failed - file not created",
+            suggestion: "Try a different quality or format",
+          });
+        }
+        return;
+      }
+
+      const stat = fs.statSync(tempFile);
+      const fileSizeMB = (stat.size / 1024 / 1024).toFixed(1);
+      console.log(`✅ File downloaded: ${fileSizeMB} MB`);
+
+      // Important: Set headers before streaming
+      if (!res.headersSent) {
+        res.setHeader("Content-Length", stat.size);
+        res.setHeader("Accept-Ranges", "bytes");
+      }
+
+      // Stream the complete file
+      const readStream = fs.createReadStream(tempFile);
+      let bytesSent = 0;
+
+      readStream.on("data", (chunk) => {
+        bytesSent += chunk.length;
+        if (!res.write(chunk)) {
+          readStream.pause();
+          res.once("drain", () => readStream.resume());
+        }
+      });
+
+      readStream.on("end", () => {
+        console.log(
+          `✅ Sent ${(bytesSent / 1024 / 1024).toFixed(1)} MB to client`
+        );
+        res.end();
+
+        // Clean up temp file
+        setTimeout(() => {
+          fs.unlink(tempFile, (err) => {
+            if (err) console.error("Failed to delete temp file:", err);
+            else console.log("🧹 Temp file deleted");
+          });
+        }, 1000);
+      });
+
+      readStream.on("error", (err) => {
+        console.error("❌ Read stream error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to read file" });
+        }
+        fs.unlink(tempFile, () => {});
+      });
+    });
+
+    // Handle client disconnect properly
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        console.log("⚠️ Client disconnected during download");
+        ytdlp.kill("SIGTERM");
+
+        // Clean up temp file if exists
+        setTimeout(() => {
+          if (fs.existsSync(tempFile)) {
+            fs.unlink(tempFile, () => {});
+          }
+        }, 1000);
+      }
+    });
+
+    ytdlp.on("error", (err) => {
+      console.error("❌ Process spawn error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+  }
+
+  // Alternative: Get direct CDN URL (fastest but may not always work)
+  static async getDirectDownloadURL(url, itag) {
+    try {
+      console.log("🔍 Getting direct download URL...");
+
+      const info = await youtubeDlExec(url, {
+        format: itag === "best" ? "best[ext=mp4]/best" : itag,
+        getUrl: true,
+        noCheckCertificates: true,
+        quiet: true,
+      });
+
+      // info will contain the direct URL
+      if (typeof info === "string") {
+        return info.trim();
+      } else if (info.url) {
+        return info.url;
+      } else {
+        throw new Error("Could not get direct URL");
+      }
+    } catch (error) {
+      console.error("Error getting direct URL:", error);
+      return null;
+    }
+  }
+
+  // Progress tracking with Server-Sent Events
+  static downloadVideoWithProgress(url, itag, type = "video") {
+    return new Promise((resolve, reject) => {
+      const eventEmitter = new (require("events"))();
 
       let formatArgs = [];
       if (type === "audio") {
-        formatArgs = [
-          "-f",
-          `${itag}/bestaudio[ext=m4a]/bestaudio`,
-          "-x",
-          "--audio-format",
-          "mp3",
-        ];
+        formatArgs = ["-f", `${itag}/bestaudio`, "-x", "--audio-format", "mp3"];
       } else if (itag === "best") {
         formatArgs = ["-f", "best[ext=mp4]/best"];
-      } else if (itag.includes("+")) {
-        formatArgs = ["-f", `${itag}/best[ext=mp4]/best`];
       } else {
-        formatArgs = ["-f", `${itag}+bestaudio[ext=m4a]/best`];
+        formatArgs = ["-f", `${itag}/best`];
       }
 
       const args = [
@@ -300,20 +570,23 @@ class YouTubeService {
         "--ffmpeg-location",
         FFMPEG_PATH,
         "-o",
-        tempFile,
-        "--user-agent",
-        "Mozilla/5.0",
-        "--referer",
-        "https://www.youtube.com/",
-        "--no-check-certificate",
-        "--no-warnings",
-        "--newline",
-        "--progress",
+        "-",
+        "--newline", // Progress on new lines
+        "--progress", // Show progress
+        "--concurrent-fragments",
+        "8",
+        "--buffer-size",
+        "32K",
       ];
 
-      const ytdlp = spawn(YTDLP_PATH, args);
+      const ytdlp = spawn(YTDLP_PATH, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
       const progressData = {
-        tempFile,
+        eventEmitter,
+        process: ytdlp,
+        stdout: ytdlp.stdout,
         progress: 0,
         speed: "",
         eta: "",
@@ -323,38 +596,38 @@ class YouTubeService {
       ytdlp.stderr.on("data", (data) => {
         const output = data.toString();
 
-        // Parse different progress indicators
+        // Parse progress information
         const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
         const speedMatch = output.match(/at\s+(\d+\.?\d*\w+\/s)/);
         const etaMatch = output.match(/ETA\s+(\d+:\d+)/);
-        const sizeMatch = output.match(/of\s+(\d+\.?\d*\w+)/);
+        const sizeMatch = output.match(/of\s+~?(\d+\.?\d*\w+)/);
 
-        if (progressMatch) progressData.progress = parseFloat(progressMatch[1]);
-        if (speedMatch) progressData.speed = speedMatch[1];
-        if (etaMatch) progressData.eta = etaMatch[1];
-        if (sizeMatch) progressData.size = sizeMatch[1];
-
-        // Emit progress update
         if (progressMatch) {
-          resolve({
-            type: "progress",
-            data: progressData,
-          });
+          progressData.progress = parseFloat(progressMatch[1]);
+          if (speedMatch) progressData.speed = speedMatch[1];
+          if (etaMatch) progressData.eta = etaMatch[1];
+          if (sizeMatch) progressData.size = sizeMatch[1];
+
+          eventEmitter.emit("progress", progressData);
         }
       });
 
       ytdlp.on("close", (code) => {
         if (code === 0) {
-          resolve({
-            type: "complete",
-            data: { ...progressData, tempFile },
-          });
+          eventEmitter.emit("complete");
         } else {
-          reject(new Error(`Download failed with code ${code}`));
+          eventEmitter.emit(
+            "error",
+            new Error(`Process exited with code ${code}`)
+          );
         }
       });
 
-      ytdlp.on("error", reject);
+      ytdlp.on("error", (err) => {
+        eventEmitter.emit("error", err);
+      });
+
+      resolve(progressData);
     });
   }
 }
